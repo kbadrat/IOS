@@ -1,0 +1,445 @@
+#!/bin/bash
+
+export POSIXLY_CORRECT=yes   
+export LC_NUMERIC=en_US.UTF-8
+
+# The variables are here
+
+file=""
+file_log=""
+file_gz=""
+file_filtered=""
+
+list_tick=""
+profit=""
+pos=""
+last_price=""
+hist_ord=""
+
+date_time_after=""
+date_time_before=""
+ticker=""
+graph_pos=""
+width=()
+
+max_number=""
+
+# Function "help_me". Outputs useful information.
+
+help_me()
+{   echo "#############################################################################################################"
+    echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~FAKULTA   INFORMAČNÍCH   TECHNOLOGIÍ   VUT   V   BRNĚ~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    echo ""
+    echo "IOS 2020/21: Projeсt 1"
+    echo "The author is Vladislav Kovalets, xkoval21"
+    echo "–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––"
+    echo "This is a script for analyzing the record of a stock trading system."
+    echo "The script filters records and provide statistics according to user input."
+    echo "If a command is also given to the script, it executes the command over the filtered records."
+    echo "If the script does not receive a filter or command, it copies the records to standard output"
+    echo "It can also process records compressed with the gzip tool (if the file name ends in .gz)."
+    echo "–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––"
+    echo "A log format must be as follows: DATE AND TIME; TICKER; TYPE OF TRANSACTION; UNIT PRICE; CURRENCY; VOLUME; ID"
+    echo "For example: 2021-07-29 23:43:13;TSM;buy;667.90;USD;306;65fb53f6-7943-11eb-80cb-8c85906a186d"
+    echo "–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––"
+    echo "Usage: tradelog [-h|--help] [FILTER] [COMMAND] [LOG [LOG2 [...]]"
+    echo "–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––"
+    echo "The COMMAND can be one of:"
+    echo ""
+    echo "list-tick   – a list of occurring stock exchange symbols, so-called \"ticker\"."
+    echo "profit      – statement of total profit from closed positions."
+    echo "pos         – a list of values of currently held positions sorted in descending order by value."
+    echo "last-price  – listing the last known price for each ticker."
+    echo "hist-ord    – statement of the histogram of the number of transactions according to the ticker."
+    echo "graph-pos   – statement of the graph of values of held positions according to the ticker."
+    echo "–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––"
+    echo "The FILTER can be a combination of the following:"
+    echo ""
+    echo "-a DATETIME – after: only records after this date are considered (without this date)." 
+    echo "-b DATETIME – before: only records before this date are considered (without this date)."
+    echo "              DATETIME is in the format \"YYYY-MM-DD HH:MM:SS\"."
+    echo "-t TICKER   – only entries corresponding to a given ticker are considered."
+    echo "              With multiple occurrences of the switch, the set of all listed ticker is taken."
+    echo "-w WIDTH    – in the list of graphs, it sets their width, that is, the length of the longest line to width."
+    echo "              Thus, WIDTH must be a positive integer. Multiple occurrences of the switch is a faulty start."
+    echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    echo "Copyright 2021"
+    echo "This program is free software. You can redistribute it and/or modify it"
+    echo "This program is distributed in the hope that it will be useful."
+    echo "#############################################################################################################"
+}
+
+# Function "func_only_filtered". Processes the file for further work with it, or outputs data.
+
+func_only_filtered()
+{
+    if [ -n "$file" ]; then 
+        eval "$file_filtered | awk '{print \$0}'"
+    elif [ -z "$file"] && [ -z "$list_tick" ] && [ -z "$profit" ] && [ -z "$pos" ] &&
+         [ -z "$last_price" ] && [ -z "$hist_ord" ] && [ -z "$graph_pos" ]; then
+        awk '{print $0}'
+    elif [ -z "$file" ] && [ -n "$list_tick" ] || [ -n "$profit" ] || [ -n "$pos" ] ||
+         [ -n "$last_price" ] || [ -n "$hist_ord" ] || [ -n "$graph_pos" ] ; then 
+        file_filtered="awk '{print \$0}'"
+    fi
+}
+
+# Function "func_list_tick". Continues to process the file and outputs data according to the "last-tick" command.
+
+func_list_tick()
+{
+    eval "$file_filtered | awk -F\; '{print \$2}' | sort -u"  
+}
+
+# Function "func_profit". Continues to process the file and outputs data according to the "profit" command.
+
+func_profit()
+ {
+    eval "$file_filtered | awk -F\; '{if (\$3 == \"sell\") profit+=\$4 * \$6; else profit-=\$4 * \$6} 
+          END {printf(\"%1.2f\n\", profit)}'"    
+} 
+
+# Function "func_pos". Continues to process the file and outputs data according to the "pos" command.
+
+func_pos()
+{     
+    eval "$file_filtered | sort -t \";\" -k 2,2 | awk -F\; 'cena=\$4 {if (pos_ticker == \$2);
+    else if (pos_ticker != \$2) {sum_of_buy=0; sum_of_sell=0; pos_ticker=\$2; objem=0};
+    if (\$3 == \"buy\") sum_of_buy+=\$6; if (\$3 == \"sell\") sum_of_sell+=\$6; objem=sum_of_buy - sum_of_sell; 
+    pos=(objem*cena); printf(\"%-10s: %11.2f\n\",pos_ticker, pos)}' | tac | sort -u -k1,1 | cat | sort -rn -k 3,3"    
+}
+
+# Function "func_last_price". Continues to process the file and outputs data according to the "last-price" command.
+
+func_last_price()
+{
+    eval "$file_filtered | awk -F\; '{printf (\"%-10s: %7s\n\",\$2 , \$4)}' | tac | sort -u -k 1,1"
+}
+
+# Function "func_hist_ord". Continues to process the file and outputs data according to the "hist-ord" command.
+
+func_hist_ord()
+{  
+    # Search for the ticker with the highest number of transactions.
+
+    max_number=$(func_only_filtered | sort -t ";" -k 2,2 | awk -F\; '{if (pos_ticker == $2);
+    else if (pos_ticker != $2) {max_ord_ticket=""; pos_ticker=$2}; max_ord_ticket+=1; 
+    if(max_ord < max_ord_ticket) max_ord=max_ord_ticket} END {print max_ord}')
+
+    # If a user didn't add the "-w" filter, each position in the histogram corresponds to one transaction.
+
+    if [ "$width" = "" ]; then
+        width="$max_number"
+    fi
+
+    # If a user entered a zero or negative number, output is an error.
+
+    if [ ${width[0]} -lt 1 ]; then
+        echo "ERROR: filter \"-w\" can only be a positive number.";
+        echo "For help, use \"-h|--help\"";
+        exit 0
+    fi 
+
+    # Continues to process the file and outputs data according to the "hist-ord" command.
+
+    eval "$file_filtered | sort -t \";\" -k 2,2 | awk -F\; '{if (pos_ticker == \$2); 
+    else if (pos_ticker != \$2) { sum_of_trn=\"\"; pos_ticker=\$2}; sum_of_trn+=1; 
+    printf (\"%-10s: %s\n\",pos_ticker, sum_of_trn)}' | tac | sort -u -k1,1 |
+    awk -F\: -v width_ord=\"$width\" -v max_number_ord=\"$max_number\" 'BEGIN {width_ord = width_ord / max_number_ord} 
+    {orders_with_sign=\"\"; orders=\$2*width_ord; for (orders; orders>0.999999; orders--)
+    orders_with_sign = sprintf(\"%s%s\", orders_with_sign, \"#\"); printf(\"%-10s: %s\n\",\$1, orders_with_sign)}'"   
+}
+
+# Function "func_graph_pos". Continues to process the file and outputs data according to the "graph-pos" command.
+
+func_graph_pos()
+{
+    # If a user didn't add the "-w" filter, each position on the chart corresponds to the value 1000.
+
+    if [ "$width" = "" ]; then
+        width="1000"
+    fi
+
+    # If a user entered a zero or negative number, output is an error.
+
+    if [ ${width[0]} -lt 1 ]; then
+        echo "ERROR: filter \"-w\" can only be a positive number.";
+        echo "For help, use \"-h|--help\"";
+        exit 0
+    fi 
+
+    # Search for the ticker with the highest number.
+
+    max_number=$(func_pos | awk -F\: '{if($2 < 0) $2+=$2*(-2); if(max_number < $2)max_number=$2} END {print max_number}')
+
+    # Continues to process the file and outputs data according to the "graph-pos" command.
+
+    func_pos | awk -F\: -v max="$max_number" -v wid="$width" 'BEGIN{div=max / wid } {num= $2 / div;
+    printf("%-10s: %11.2f\n", $1, num)}' | awk -F\: '{symb=" ";graph=$2;
+    for (graph; graph>=1; graph--) symb = sprintf("%s%s", symb, "#"); 
+    for (graph; graph<=-1; graph++) symb = sprintf("%s%s", symb, "!");
+    if(symb == " ") printf("%-10s:\n", $1) ;else printf("%-10s:%s\n", $1, symb)}' | tac | sort -u -k1,1                     
+}
+
+# PROCESSING INPUT ARGUMENTS.
+
+while [ $# -gt 0 ] 
+do
+    case "$1" in                                                         
+        list-tick) 
+            list_tick="1"
+            shift ;;
+
+        profit) 
+            profit="1"
+            shift ;;
+
+        pos)
+            pos="1"
+            shift;;
+
+        last-price)
+            last_price="1"
+            shift;;
+
+        hist-ord) 
+            hist_ord="1"
+            shift ;;
+
+        graph-pos) 
+            graph_pos="1"
+            shift;;
+
+        -a)
+            date_time_after="$2"
+            shift 2;; 
+
+        -b)
+            date_time_before="$2"
+            shift 2;;
+
+        -t) 
+            ticker="$ticker $2;"
+            shift 2;;
+        
+        -w) 
+            width=($width $2)
+
+            # if a user entered more than one "-w" filter, output is an error.
+
+            if [ ${#width[*]} -gt 1 ]; then
+                echo "ERROR: you entered more than one \"-w\" filter.";
+                echo "For help, use \"-h|--help\""
+                exit 0
+            fi
+
+            shift 2;;
+        
+        -h|--help)   
+            help_me
+            exit 0;; 
+        
+        *.gz)
+            file_gz="$file_gz $1"
+            shift;;
+         
+        *.log)
+            file_log="$file_log $1"
+            shift;;
+
+        *) 
+            # if a user entered an unknown parameter.
+
+            echo "$1 is not an option. For help, use \"-h|--help\""
+            exit 0;;           
+    esac
+done
+
+# Redirects a file for further work with it. 
+# If necessary, unpack the archive.
+
+if [ -n "$file_gz" ]; then
+   file="gzip -d -c $file_gz | cat - |"
+elif [ -n "$file_log" ]; then
+   file="cat $file_log |"
+fi
+
+# If there is no file, the "func_only_filtered" function will start.
+
+if [ -z "$file" ]; then
+   func_only_filtered
+fi
+
+# If there is a file, add it to the variable for further work with it. 
+
+if [ -n "$file" ]; then
+   file_filtered="$file awk '{print \$0}'"
+fi
+
+# PROCESSING FILTERS
+
+# If there is a file and the "-t" filter is set, add it to the variable for further work with it.
+
+if [ -n "$file" ] && [ -n "$ticker" ]; then
+   file_filtered="$file awk -F\; '(\"$ticker\" ~ \$2\";\") {print \$0}'"
+fi
+
+# If there is a file and the "-a" filter is set, add it to the variable for further work with it.
+
+if [ -n "$file" ] && [ -n "$date_time_after" ]; then
+   file_filtered="$file awk -F\; '{if (\"$date_time_after\" < \$1) print \$0}'"
+fi
+
+# If there is a file and the "-b" filter is set, add it to the variable for further work with it.
+
+if [ -n "$file" ] && [ -n "$date_time_before" ]; then
+   file_filtered="$file awk -F\; '{if (\"$date_time_before\" > \$1) print \$0}'"
+fi
+
+# If there is a file and the "-a" and "-b" filters are set, add it to the variable for further work with it.
+
+if [ -n "$file" ] && [ -n "$date_time_after" ] && [ -n "$date_time_before" ]; then
+   file_filtered="$file awk -F\; '{if (\"$date_time_after\" < \$1 && \"$date_time_before\" > \$1) print \$0}'"
+fi
+
+# If there is a file and the "-t" and "-a" filters are set, add it to the variable for further work with it.
+
+if [ -n "$file" ] && [ -n "$ticker" ] && [ -n "$date_time_after" ]; then
+   file_filtered="$file awk -F\; '{if (\"$ticker\" ~ \$2\";\" && \"$date_time_after\" < \$1) print \$0}'"
+fi
+
+# If there is a file and the "-t" and "-b" filters are set, add it to the variable for further work with it.
+
+if [ -n "$file" ] && [ -n "$ticker" ] && [ -n "$date_time_before" ]; then
+   file_filtered="$file awk -F\; '{if (\"$ticker\" ~ \$2\";\" && \"$date_time_before\" > \$1) print \$0}'"
+fi
+
+# If there is a file and the "-t", "-a" and "-b" filters are set, add it to the variable for further work with it.
+
+if [ -n "$file" ] && [ -n "$ticker" ] && [ -n "$date_time_after" ] && [ -n "$date_time_before" ]; then
+   file_filtered="$file awk -F\; '{if (\"$ticker\" ~ \$2\";\" &&
+   \"$date_time_after\" < \$1 && \"$date_time_before\" > \$1) print \$0}'"
+fi
+
+# If there is a file but no command, the "func_only_filtered" function is started.
+
+if [ -n "$file" ] && [ -z "$list_tick" ] && [ -z "$profit" ] && [ -z "$pos" ] && 
+   [ -z "$last_price" ] && [ -z "$hist_ord" ] && [ -z "$graph_pos" ]; then
+   func_only_filtered; exit 0
+fi
+
+# PROCESSING COMMANDS
+
+# If the user entered more than one command, output is an error.
+
+if [ -n "$list_tick" ] && [ -n "$profit" ]; then
+    echo "ERROR: you can only use one command at one time. For help, use \"-h|--help\"";
+    exit 0
+fi
+
+if [ -n "$list_tick" ] && [ -n "$pos" ]; then
+    echo "ERROR: you can only use one command at one time. For help, use \"-h|--help\"";
+    exit 0
+fi
+
+if [ -n "$list_tick" ] && [ -n "$last_price" ]; then
+    echo "ERROR: you can only use one command at one time. For help, use \"-h|--help\"";
+    exit 0
+fi
+
+if [ -n "$list_tick" ] && [ -n "$hist_ord" ]; then
+    echo "ERROR: you can only use one command at one time. For help, use \"-h|--help\"";
+    exit 0
+fi
+
+if [ -n "$list_tick" ] && [ -n "$graph_pos" ]; then
+    echo "ERROR: you can only use one command at one time. For help, use \"-h|--help\"";
+    exit 0
+fi
+
+if [ -n "$profit" ] && [ -n "$pos" ]; then
+    echo "ERROR: you can only use one command at one time. For help, use \"-h|--help\"";
+    exit 0
+fi
+
+if [ -n "$profit" ] && [ -n "$last_price" ]; then
+    echo "ERROR: you can only use one command at one time. For help, use \"-h|--help\"";
+    exit 0
+fi
+
+if [ -n "$profit" ] && [ -n "$hist_ord" ]; then
+    echo "ERROR: you can only use one command at one time. For help, use \"-h|--help\"";
+    exit 0
+fi
+
+if [ -n "$profit" ] && [ -n "$graph_pos" ]; then
+    echo "ERROR: you can only use one command at one time. For help, use \"-h|--help\"";
+    exit 0
+fi
+
+if [ -n "$pos" ] && [ -n "$last_price" ]; then
+    echo "ERROR: you can only use one command at one time. For help, use \"-h|--help\"";
+    exit 0
+fi
+
+if [ -n "$pos" ] && [ -n "$hist_ord" ]; then
+    echo "ERROR: you can only use one command at one time. For help, use \"-h|--help\"";
+    exit 0
+fi
+
+if [ -n "$pos" ] && [ -n "$graph_pos" ]; then
+    echo "ERROR: you can only use one command at one time. For help, use \"-h|--help\"";
+    exit 0
+fi
+
+if [ -n "$last_price" ] && [ -n "$hist_ord" ]; then
+    echo "ERROR: you can only use one command at one time. For help, use \"-h|--help\"";
+    exit 0
+fi
+
+if [ -n "$last_price" ] && [ -n "$graph_pos" ]; then
+    echo "ERROR: you can only use one command at one time. For help, use \"-h|--help\"";
+    exit 0
+fi
+
+if [ -n "$hist_ord" ] && [ -n "$graph_pos" ]; then
+    echo "ERROR: you can only use one command at one time. For help, use \"-h|--help\"";
+    exit 0
+fi
+
+# If necessary, run the function with the processing of the "list-tick" command.
+
+if [ -n "$list_tick" ] ; then
+   func_list_tick; 
+   exit 0
+fi
+
+# If necessary, run the function with the processing of the "profit" command.
+
+if [ -n "$profit" ]; then
+   func_profit; exit 0
+fi
+
+# If necessary, run the function with the processing of the "pos" command.
+
+if [ -n "$pos" ]; then
+   func_pos; exit 0
+fi
+
+# If necessary, run the function with the processing of the "last-price" command.
+
+if [ -n "$last_price" ]; then
+   func_last_price; exit 0
+fi
+
+# If necessary, run the function with the processing of the "hist-ord" command.
+
+if [ -n "$hist_ord" ]; then
+   func_hist_ord; exit 0
+fi
+
+# If necessary, run the function with the processing of the "graph-pos" command.
+
+if [ -n "$graph_pos" ]; then
+   func_graph_pos; exit 0
+fi
